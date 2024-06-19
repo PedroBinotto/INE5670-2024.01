@@ -1,21 +1,25 @@
 from datetime import datetime
 from typing import List
 import uuid
-from fastapi import Body, FastAPI, Request, status
+from fastapi import Body, FastAPI, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
 from dotenv import dotenv_values
 from bson.objectid import ObjectId as BsonObjectId
+from fastapi.middleware.cors import CORSMiddleware
 
 env = dotenv_values(".env")
 
 app = FastAPI()
 
-
-class RecordCreateModel(BaseModel):
-    turnedOnAt: datetime
-    turnedOffAt: datetime
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class PydanticObjectId(BsonObjectId):
@@ -24,10 +28,15 @@ class PydanticObjectId(BsonObjectId):
         yield cls.validate
 
     @classmethod
-    def validate(cls, v, x):
+    def validate(cls, v, *_):
         if not isinstance(v, BsonObjectId):
             raise TypeError("ObjectId required")
         return str(v)
+
+
+class RecordCreateModel(BaseModel):
+    turnedOnAt: datetime
+    turnedOffAt: datetime
 
 
 class Record(BaseModel):
@@ -38,10 +47,13 @@ class Record(BaseModel):
 
 @app.on_event("startup")
 def startup_db_client():
-    app.mongodb_client = MongoClient(
-        env["MONGO_URI"], username=env["MONGO_USERNAME"], password=env["MONGO_PASSWORD"]
-    )
-    app.database = app.mongodb_client[env["DB_NAME"]]
+    uri = env["MONGO_URI"]
+    user = env["MONGO_USERNAME"]
+    password = env["MONGO_PASSWORD"]
+    database_name = env["DB_NAME"]
+
+    app.mongodb_client = MongoClient(uri, username=user, password=password)
+    app.database = app.mongodb_client[database_name]
 
 
 @app.get("/api", response_description="List all records", response_model=List[Record])
@@ -57,10 +69,8 @@ async def getData():
     response_model=Record,
 )
 async def postData(record: RecordCreateModel = Body(...)):
-    print(record)
     record = jsonable_encoder(record)
     new_record = app.database["records"].insert_one(record)
     created_record = app.database["records"].find_one({"_id": new_record.inserted_id})
-    print(created_record)
 
     return created_record
